@@ -74,7 +74,7 @@ class VersionHeader(Task):
             p = sp.Popen([self.env.GIT, "rev-parse",
                           "--short", "HEAD"],
                          stdout=sp.PIPE, stderr=open(os.devnull, "w"))
-        version = p.communicate()[0]
+        version = p.communicate()[0].strip()
 
         status = sp.Popen([self.env.GIT, "status", "--porcelain"],
                           stdout=sp.PIPE).communicate()[0]
