@@ -1,0 +1,21 @@
+
+This package provides a pair of executables to test RDMA use with PCI
+mapped memory.
+
+There is a server and a client. The server maps memory either from the
+CPU or a PCI device and the client tests the bandwidth of reads and/or
+writes.
+
+The server has three options for choosing the memory:
+
+1) With no options, it defaults to allocating CPU buffers.
+
+2) With the -g option it will properly allocate and pin Nvidia GPU memory and
+   use it as the buffer3
+
+3) With the -m option you may specify any mmappable file to use as a
+   buffer. Note: this will only work as expected if the file maps to
+   physical memory not disk pages. A good example of this are raw PCI
+   BAR spaces in
+
+   /sys/bus/pci/devices/<pci device>/resource*
