@@ -459,7 +459,7 @@ int main(int argc, char *argv[])
     struct rdma_cm_id *id = do_connect(&cfg);
     if (id == NULL) return -1;
 
-    if (id->event->param.conn.private_data_len != sizeof(struct common_priv_data)) {
+    if (id->event->param.conn.private_data_len < sizeof(struct common_priv_data)) {
         fprintf(stderr, "ERROR: Unexpected private data length!\n");
         ret = -1;
         goto disconnect;
