@@ -335,7 +335,7 @@ int main(int argc, char *argv[])
     if (cfg.use_gpu_mem && !cfg.mmap_file) {
         #ifdef HAVE_DONARD_PINPOOL_H
         printf("Buffer Type: GPU\n");
-        if (pinpool_init(4, cfg.pbuf_size_mb*1024*1024)) {
+        if (pinpool_init(1, cfg.pbuf_size_mb*1024*1024)) {
             perror("Could not initialize pin pool");
             return -1;
         }
