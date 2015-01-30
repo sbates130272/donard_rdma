@@ -295,6 +295,30 @@ dereg_and_exit:
     rdma_dereg_mr(mr);
 }
 
+static void send_goahead(struct rdma_cm_id *id, uint32_t *buf,
+                         struct ibv_mr *mr)
+{
+    struct ibv_wc wc;
+
+    if (rdma_post_send(id, NULL, buf, 0, mr, 0)) {
+        perror("rdma_post_send");
+        return;
+    }
+
+    if (rdma_get_send_comp(id, &wc) <= 0){
+        perror("rdma_get_send_comp");
+        return;
+    }
+
+    if (wc.status != IBV_WC_SUCCESS) {
+        fprintf(stderr, "Send Completion reported failure: %s (%d)\n",
+                ibv_wc_status_str(wc.status), wc.status);
+        return;
+    }
+
+    printf("GoAhead Completed Successfully.\n");
+}
+
 int main(int argc, char *argv[])
 {
     struct config cfg;
@@ -400,6 +424,7 @@ int main(int argc, char *argv[])
             printf("Testing Send/Recv\n");
             common_test_send(id, b.addr, b.mr, COMMON_A1, COMMON_B1);
             common_test_recv(id, b.addr, b.mr, COMMON_A2, COMMON_B2);
+            send_goahead(id, b.addr, b.mr);
         }
         wait_for_seed(id, b.addr);
 

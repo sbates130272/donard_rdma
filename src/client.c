@@ -429,6 +429,30 @@ static void report_result(const int nctxs, struct context *ctxs[nctxs],
     fprintf(stderr, "\n");
 }
 
+static void wait_for_goahead(struct rdma_cm_id *id, uint32_t *buf,
+                             struct ibv_mr *mr)
+{
+    struct ibv_wc wc;
+
+    if (rdma_post_recv(id, NULL, buf, 0, mr)) {
+        perror("rdma_post_recv");
+        return;
+    }
+
+    if (rdma_get_recv_comp(id, &wc) <= 0){
+        perror("rdma_get_recv_comp");
+        return;
+    }
+
+    if (wc.status != IBV_WC_SUCCESS) {
+        fprintf(stderr, "Recv Completion reported failure: %s (%d)\n",
+                ibv_wc_status_str(wc.status), wc.status);
+        return;
+    }
+
+    printf("GoAhead Received Succesfully.\n");
+}
+
 int main(int argc, char *argv[])
 {
     int ret = 0;
@@ -497,6 +521,7 @@ int main(int argc, char *argv[])
         printf("Testing Send/Recv\n");
         common_test_recv(id, ctxs[0]->buf, ctxs[0]->mr, COMMON_A1, COMMON_B1);
         common_test_send(id, ctxs[0]->buf, ctxs[0]->mr, COMMON_A2, COMMON_B2);
+        wait_for_goahead(id, ctxs[0]->buf, ctxs[0]->mr);
         printf("\n");
     }
 
