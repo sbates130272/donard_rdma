@@ -39,6 +39,8 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <time.h>
+#include <unistd.h>
+#include <limits.h>
 
 const char program_desc[] =
     "RDMA test client for moving data to GPU memory";
@@ -47,6 +49,7 @@ struct config {
     char *addr;
     char *port;
     int verbose;
+    int latency;
     long block_size;
     long count;
     unsigned nctxs;
@@ -96,6 +99,9 @@ static const struct argconfig_commandline_options command_line_options[] = {
     {"v",             "", CFG_NONE, &defaults.verbose, no_argument, NULL},
     {"verbose",       "", CFG_NONE, &defaults.verbose, no_argument,
             "be verbose"},
+    {"l",             "", CFG_NONE, &defaults.latency, no_argument, NULL},
+    {"latency",       "", CFG_NONE, &defaults.latency, no_argument,
+            "perform latency measurements"},
     {"V",               "", CFG_NONE, &defaults.show_version, no_argument, NULL},
     {"version",         "", CFG_NONE, &defaults.show_version, no_argument,
             "print the version and exit"},
@@ -151,6 +157,8 @@ struct context {
 
     int verbose;
 
+    struct timeval start_time;
+
     unsigned int cur_seed;
     int use_zeros;
 
@@ -161,6 +169,11 @@ struct context {
 
     unsigned long long wrote_bytes;
     unsigned long long read_bytes;
+    unsigned long long latency;
+    unsigned long long latency_min;
+    unsigned long long latency_max;
+
+    unsigned long count;
 };
 
 static struct context *init_context(struct rdma_cm_id *id, size_t buf_length,
@@ -190,7 +203,7 @@ static struct context *init_context(struct rdma_cm_id *id, size_t buf_length,
 
     ctx->cur_seed = rand();
     ctx->use_zeros = cfg->use_zeros;
-    ctx->wrote_bytes = ctx->read_bytes = 0;
+    ctx->wrote_bytes = ctx->read_bytes = ctx->latency = ctx->count = 0;
     ctx->readback_addr = NULL;
     ctx->rloc = malloc(sizeof(*ctx->rloc));
     ctx->rloc->cur = ctx->rloc->start = (void *) rstart;
@@ -198,6 +211,9 @@ static struct context *init_context(struct rdma_cm_id *id, size_t buf_length,
     ctx->rloc->rkey = rkey;
 
     ctx->id = id;
+
+    ctx->latency_max = 0;
+    ctx->latency_min = ULLONG_MAX;
 
     return ctx;
 
@@ -249,6 +265,14 @@ static void check_random_data(struct context *ctx)
     ctx->cur_seed = rand();
 }
 
+static unsigned long long elapsed_utime(struct timeval start_time,
+                                  struct timeval end_time)
+{
+    unsigned long long ret = (end_time.tv_sec - start_time.tv_sec)*1000000 +
+        (end_time.tv_usec - start_time.tv_usec);
+    return ret;
+}
+
 static size_t txn_length(struct context *ctx)
 {
     size_t rlen = (ctx->rloc->end - ctx->rloc->cur) * sizeof(*ctx->rloc->end);
@@ -265,16 +289,16 @@ static void increment_rloc(struct context *ctx, size_t length)
 
 static int write_context(struct context *ctx)
 {
+
     size_t length = txn_length(ctx);
     uint32_t *raddr = ctx->rloc->cur;
 
     if (ctx->verbose) printf("Writing %zd bytes to %p\n", length, raddr);
+
+    gettimeofday(&ctx->start_time, NULL);
     int ret = rdma_post_write(ctx->id, ctx, ctx->buf, length, ctx->mr, 0,
                               (uint64_t) raddr, ctx->rloc->rkey);
-
-    if (ret) {
-        return ret;
-    }
+    if (ret) return ret;
 
     ctx->readback_addr = raddr;
     ctx->readback_len = length;
@@ -294,6 +318,7 @@ static int read_context(struct context *ctx, int read_only)
         ctx->readback_len = txn_length(ctx);
     }
 
+    gettimeofday(&ctx->start_time, NULL);
     int ret = rdma_post_read(ctx->id, ctx, ctx->buf, ctx->readback_len,
                              ctx->mr, 0, (uint64_t)ctx->readback_addr,
                              ctx->rloc->rkey);
@@ -351,6 +376,18 @@ static int manage_transfer(struct rdma_cm_id *id, struct config *cfg)
 
         struct context *ctx = (struct context *) wc.wr_id;
 
+        if (cfg->latency){
+            struct timeval end_time;
+            gettimeofday(&end_time, NULL);
+            unsigned long long latency = elapsed_utime(ctx->start_time, end_time);
+            ctx->latency += latency;
+            ctx->count++;
+            if ( latency < ctx->latency_min )
+                ctx->latency_min = latency;
+            if ( latency > ctx->latency_max )
+                ctx->latency_max = latency;
+        }
+
         size_t byte_len = cfg->block_size;
 
         switch (wc.opcode) {
@@ -407,13 +444,20 @@ static int manage_transfer(struct rdma_cm_id *id, struct config *cfg)
 static void report_result(const int nctxs, struct context *ctxs[nctxs],
                           struct timeval *start_time, struct timeval *end_time)
 {
-    long long wrote_bytes = 0, read_bytes = 0;
+    long long wrote_bytes = 0, read_bytes = 0, latency = 0,
+        latency_min = ULLONG_MAX, latency_max = 0, count = 0;
     size_t total_bytes = 0;
 
     for (int i = 0; i < nctxs; i++) {
         wrote_bytes += ctxs[i]->wrote_bytes;
         read_bytes += ctxs[i]->read_bytes;
         total_bytes += ctxs[i]->wrote_bytes + ctxs[i]->read_bytes;
+        count += ctxs[i]->count;
+        latency += ctxs[i]->latency;
+        if ( ctxs[i]->latency_min < latency_min )
+            latency_min = ctxs[i]->latency_min;
+        if ( ctxs[i]->latency_max > latency_max )
+            latency_max = ctxs[i]->latency_max;
     }
 
     const char *w_suffix = suffix_binary_get(&wrote_bytes);
@@ -427,6 +471,9 @@ static void report_result(const int nctxs, struct context *ctxs[nctxs],
     fprintf(stderr, "Transfered: ");
     report_transfer_rate(stderr, start_time, end_time, total_bytes);
     fprintf(stderr, "\n");
+    if (latency)
+        fprintf(stderr, "Latency (mean/min/max):    ( %lld / %lld / %lld ) us\n", latency/count,
+                latency_min, latency_max);
 }
 
 static void wait_for_goahead(struct rdma_cm_id *id, uint32_t *buf,
