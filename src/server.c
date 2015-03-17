@@ -29,6 +29,7 @@
 #include "version.h"
 
 #include <argconfig/argconfig.h>
+#include <argconfig/suffix.h>
 
 #ifdef HAVE_DONARD_PINPOOL_H
 #include <donard/pinpool.h>
@@ -370,6 +371,10 @@ int main(int argc, char *argv[])
         printf("Buffer Type: MMAP\n");
         cfg.buf_size = cfg.pbuf_size_mb*1024*1024;
     }
+
+    double buf_size       = cfg.buf_size;
+    const char *bs_suffix = suffix_dbinary_get(&buf_size);
+    printf("Buffer Size: %3.1f %2sB\n", buf_size, bs_suffix);
 
     struct rdma_cm_id *listen_id = setup_server(&cfg);
     if (listen_id == NULL)
