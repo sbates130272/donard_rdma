@@ -121,8 +121,10 @@ struct buffer {
 
 int create_buffer(struct buffer *b, struct rdma_cm_id *id, struct config *cfg)
 {
+    struct timeval start_time, end_time;
     b->fd = -1;
     b->pbuf = NULL;
+    gettimeofday(&start_time, NULL);
 
     if (cfg->mmap_file != NULL) {
         b->fd = open(cfg->mmap_file, O_RDWR);
@@ -168,6 +170,12 @@ int create_buffer(struct buffer *b, struct rdma_cm_id *id, struct config *cfg)
         fprintf(stderr, "rdma_reg_msgs/read: %d  ", errno);
         return -3;
     }
+    gettimeofday(&end_time, NULL);
+    double create_time = (double)elapsed_utime(start_time,
+                                               end_time)/1e6;
+    const char *create_suffix = suffix_dbinary_get(&create_time);
+    fprintf(stdout,"Buffer Creation Time: %3.1f %2ss\n", create_time,
+        create_suffix);
 
     return 0;
 }
